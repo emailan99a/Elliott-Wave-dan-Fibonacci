@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Elliott Wave & Fibonacci Analyzer</title>
+    <link rel="stylesheet" href="./styles.css?v=20260529-chart-zero-fix">
+  </head>
+  <body>
+    <main class="page">
+      <section id="homeView" class="app-card">
+        <header class="top-header">
+          <h1>Halaman utama</h1>
+        </header>
+
+        <div class="content-block">
+          <div class="field">
+            <label for="marketSelect">Market</label>
+            <div class="select-wrap">
+              <select id="marketSelect" aria-label="Pilih market">
+                <option value="crypto" selected>Crypto</option>
+                <option value="us">Saham Amerika</option>
+                <option value="indonesia">Saham Indonesia</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="divider"></div>
+
+          <h2>List aset</h2>
+          <div id="assetList" class="asset-list"></div>
+          <div id="pagination" class="pagination"></div>
+          <p class="status" id="homeStatus">Menyiapkan screening aset.</p>
+        </div>
+      </section>
+
+      <section id="detailView" class="app-card" hidden>
+        <header class="detail-header">
+          <button id="backButton" class="back-button" type="button" aria-label="Kembali ke halaman utama">◀</button>
+          <h1>Detail aset</h1>
+        </header>
+
+        <div class="content-block">
+          <section class="chart-section" aria-label="Chart TradingView">
+            <h2>Chart</h2>
+            <div class="chart-box">
+              <div id="tradingViewChart" class="tradingview-widget-container"></div>
+              <div id="chartFallback" class="chart-fallback">Chart TradingView 1D berdasarkan aset yang dipilih.</div>
+            </div>
+          </section>
+
+          <div class="divider"></div>
+
+          <section id="analysisSection" class="analysis-section">
+            <h2>Analisa Elliott Wave & Fibonacci</h2>
+            <div id="analysisContent"></div>
+          </section>
+
+          <section class="news-section">
+            <div class="divider"></div>
+            <h2>Corporate action & news</h2>
+            <div id="newsSupport" class="news-support"></div>
+            <div class="field news-filter-field">
+              <label for="newsFilter">Filter</label>
+              <div class="select-wrap">
+                <select id="newsFilter" aria-label="Filter corporate action dan news">
+                  <option value="all" selected>Corporate action and news</option>
+                  <option value="corporate">Corporate action</option>
+                  <option value="news">News</option>
+                </select>
+              </div>
+            </div>
+            <div id="newsContent" class="news-list"></div>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <script src="./app.js?v=20260529-chart-zero-fix" type="module"></script>
+  </body>
+</html>
