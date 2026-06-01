@@ -551,7 +551,7 @@ p {
 
 .previous-panel {
   margin-top: 24px;
-  border-top: 3px solid var(--red);
+  border-top: 2px solid var(--line);
   padding-top: 20px;
 }
 
