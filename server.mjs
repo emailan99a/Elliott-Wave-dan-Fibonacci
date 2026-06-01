@@ -1094,9 +1094,21 @@ function analyzeFullAsset(asset, candles, threshold) {
 function analyzePreviousAsset(asset, candles, threshold) {
   const previousCandles = Array.isArray(candles) ? candles.slice(0, -1) : [];
   if (previousCandles.length < 120) return null;
+
+  const previousClose = previousCandles.at(-1)?.close;
+  const previousDate = previousCandles.at(-1)?.date;
+  const previousAsset = {
+    ...asset,
+    currentPrice: Number.isFinite(Number(previousClose)) ? Number(previousClose) : asset.currentPrice,
+    tvPrice: Number.isFinite(Number(previousClose)) ? Number(previousClose) : asset.tvPrice,
+    close: Number.isFinite(Number(previousClose)) ? Number(previousClose) : asset.close,
+    lastUpdated: previousDate || asset.lastUpdated
+  };
+
   return {
-    ...analyzeFullAsset(asset, previousCandles, threshold),
-    label: "24 jam yang lalu"
+    ...analyzeFullAsset(previousAsset, previousCandles, threshold),
+    label: "24 jam yang lalu",
+    sourceDate: previousDate || ""
   };
 }
 
