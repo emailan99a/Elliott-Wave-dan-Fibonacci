@@ -577,3 +577,10 @@ p {
     justify-content: flex-start;
   }
 }
+
+
+.previous-note {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+}

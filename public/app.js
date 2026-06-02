@@ -207,9 +207,13 @@ function renderPreviousInline(previous) {
   if (!previous) {
     return '<span class="previous-empty">24 jam yang lalu: belum tersedia</span>';
   }
+  const unchanged = previous.comparison && previous.comparison.changed === false
+    ? '<span class="previous-note">(belum berubah)</span>'
+    : "";
   return `
     <span class="previous-label">24 jam yang lalu:</span>
     ${renderSummaryMeta(analysisSummary(previous), "previous-value")}
+    ${unchanged}
   `;
 }
 
