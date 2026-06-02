@@ -838,6 +838,135 @@ async function getCryptoHistory(asset, safeDays) {
 }
 
 
+
+async function getBinanceSpotHistory(asset, safeDays) {
+  const symbol = `${cryptoPerpSymbol(asset)}USDT`;
+  const url = new URL("https://api.binance.com/api/v3/klines");
+  url.searchParams.set("symbol", symbol);
+  url.searchParams.set("interval", "1d");
+  url.searchParams.set("limit", String(Math.min(safeDays, 1000)));
+
+  const response = await fetchWithTimeout(url, { accept: "application/json", timeoutMs: 12000 });
+  const data = await response.json();
+
+  if (!Array.isArray(data)) {
+    throw new Error(data.msg || `Binance spot rejected ${symbol}`);
+  }
+
+  const rows = data.map((item) => ({
+    date: new Date(Number(item[0])).toISOString().slice(0, 10),
+    open: Number(item[1]),
+    high: Number(item[2]),
+    low: Number(item[3]),
+    close: Number(item[4]),
+    volume: Number(item[5] || 0),
+    source: "Binance Spot"
+  }));
+
+  const output = rows
+    .filter((row) => Number.isFinite(Number(row.close)) && Number(row.close) > 0)
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+
+  if (!output.length) throw new Error(`No Binance spot history for ${asset.symbol}`);
+  return output.slice(-safeDays);
+}
+
+async function getBybitSpotHistory(asset, safeDays) {
+  const symbol = `${cryptoPerpSymbol(asset)}USDT`;
+  const url = new URL("https://api.bybit.com/v5/market/kline");
+  url.searchParams.set("category", "spot");
+  url.searchParams.set("symbol", symbol);
+  url.searchParams.set("interval", "D");
+  url.searchParams.set("limit", String(Math.min(safeDays, 1000)));
+
+  const response = await fetchWithTimeout(url, { accept: "application/json", timeoutMs: 12000 });
+  const data = await response.json();
+
+  if (String(data.retCode) !== "0") {
+    throw new Error(data.retMsg || `Bybit spot rejected ${symbol}`);
+  }
+
+  const rows = (data.result?.list || []).map((item) => ({
+    date: new Date(Number(item[0])).toISOString().slice(0, 10),
+    open: Number(item[1]),
+    high: Number(item[2]),
+    low: Number(item[3]),
+    close: Number(item[4]),
+    volume: Number(item[5] || 0),
+    source: "Bybit Spot"
+  }));
+
+  const output = rows
+    .filter((row) => Number.isFinite(Number(row.close)) && Number(row.close) > 0)
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+
+  if (!output.length) throw new Error(`No Bybit spot history for ${asset.symbol}`);
+  return output.slice(-safeDays);
+}
+
+async function getOkxSpotHistory(asset, safeDays) {
+  const symbol = cryptoPerpSymbol(asset);
+  const instrument = `${symbol}-USDT`;
+  const url = new URL("https://www.okx.com/api/v5/market/history-candles");
+  url.searchParams.set("instId", instrument);
+  url.searchParams.set("bar", "1Dutc");
+  url.searchParams.set("limit", String(Math.min(safeDays, 300)));
+
+  const response = await fetchWithTimeout(url, { accept: "application/json", timeoutMs: 12000 });
+  const data = await response.json();
+
+  if (String(data.code) !== "0") {
+    throw new Error(data.msg || `OKX spot rejected ${instrument}`);
+  }
+
+  const rows = (data.data || []).map((item) => ({
+    date: new Date(Number(item[0])).toISOString().slice(0, 10),
+    open: Number(item[1]),
+    high: Number(item[2]),
+    low: Number(item[3]),
+    close: Number(item[4]),
+    volume: Number(item[5] || 0),
+    source: "OKX Spot"
+  }));
+
+  const output = rows
+    .filter((row) => Number.isFinite(Number(row.close)) && Number(row.close) > 0)
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+
+  if (!output.length) throw new Error(`No OKX spot history for ${asset.symbol}`);
+  return output.slice(-safeDays);
+}
+
+async function getCryptoSpotHistory(asset, safeDays) {
+  const symbol = cryptoPerpSymbol(asset);
+  const isStableLike = ["USDT", "USDC", "DAI", "FDUSD", "USDD", "WETH", "WBTC"].includes(symbol);
+
+  const providers = isStableLike
+    ? [
+        ["CoinGecko Spot", () => getCoinGeckoHistory(asset, safeDays)]
+      ]
+    : [
+        ["CoinGecko Spot", () => getCoinGeckoHistory(asset, safeDays)],
+        ["Binance Spot", () => getBinanceSpotHistory(asset, safeDays)],
+        ["Bybit Spot", () => getBybitSpotHistory(asset, safeDays)],
+        ["OKX Spot", () => getOkxSpotHistory(asset, safeDays)]
+      ];
+
+  const errors = [];
+
+  for (const [provider, loader] of providers) {
+    try {
+      const rows = await loader();
+      if (rows.length) return rows.map((row) => ({ ...row, source: provider }));
+    } catch (error) {
+      errors.push(`${provider}: ${error.message}`);
+    }
+  }
+
+  throw new Error(`No spot history found for ${asset.symbol}. ${errors.join(" | ")}`);
+}
+
+
 async function getHistory(asset, days = 730) {
   const maxDays = asset.market === "crypto_spot" || asset.market === "crypto_perp" || asset.market === "crypto" ? 365 : 1825;
   const safeDays = Math.min(Math.max(Number(days) || 730, 120), maxDays);
@@ -848,7 +977,7 @@ async function getHistory(asset, days = 730) {
 
   if (asset.market === "crypto_spot") {
     try {
-      const rows = await getCoinGeckoHistory(asset, safeDays);
+      const rows = await getCryptoSpotHistory(asset, safeDays);
       if (rows.length) return setCached(key, rows);
     } catch (error) {
       if (typeof staleCached !== "undefined" && staleCached) return staleCached;
@@ -1785,27 +1914,6 @@ async function handleApi(req, res, url) {
     const total = assets.length;
     const pages = Math.max(Math.ceil(total / pageSize), 1);
     const pageAssets = assets.slice((page - 1) * pageSize, page * pageSize);
-    if (!useMock && market === "crypto_spot") {
-      const results = pageAssets.map((asset) => {
-        const row = buildCryptoScreenRow(asset);
-        return {
-          ...row,
-          previous: buildFastPreviousRowFromMarketData(row)
-        };
-      });
-      json(res, 200, {
-        market,
-        page,
-        pageSize,
-        total,
-        pages,
-        source: "CoinGecko Spot Fast Screening",
-        elapsedMs: Date.now() - startedAt,
-        results,
-        errors: []
-      });
-      return;
-    }
     const rows = await mapLimit(pageAssets, market === "crypto_perp" || market === "crypto" || market === "crypto_spot" ? 1 : 5, async (asset, index) => {
       if (!useMock && index > 0) await delay(market === "crypto_perp" || market === "crypto" || market === "crypto_spot" ? 650 : 650);
       const safeDays = analysisDays(asset, days);
@@ -1826,7 +1934,7 @@ async function handleApi(req, res, url) {
       pageSize,
       total,
       pages,
-      source: useMock ? "mock" : market === "crypto_spot" ? "CoinGecko Spot" : market === "crypto_perp" || market === "crypto" ? "Perpetual 1D: Bybit/Binance/OKX" : "Stooq/Yahoo",
+      source: useMock ? "mock" : market === "crypto_spot" ? "Spot 1D: CoinGecko/Binance/Bybit/OKX" : market === "crypto_perp" || market === "crypto" ? "Perpetual 1D: Bybit/Binance/OKX" : "Stooq/Yahoo",
       elapsedMs: Date.now() - startedAt,
       results,
       errors
@@ -1946,7 +2054,7 @@ const server = http.createServer(async (req, res) => {
     await serveStatic(req, res, url);
   } catch (error) {
     json(res, 500, {
-      error: error.message,
+      error: String(error.message || "").includes("429") ? "Data source rate limited. Please try again later." : error.message,
       hint: "Market data may be rate-limited or unavailable. Try again later or use ?mock=1 for a local demo."
     });
   }
