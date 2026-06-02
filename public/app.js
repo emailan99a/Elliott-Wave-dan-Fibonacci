@@ -15,13 +15,15 @@ const elements = {
 };
 
 const MARKET_LABELS = {
-  crypto: "Crypto",
+  crypto_spot: "Crypto Spot",
+  crypto_perp: "Crypto Perpetual",
+  crypto: "Crypto Perpetual",
   us: "Saham Amerika",
   indonesia: "Saham Indonesia"
 };
 
 const state = {
-  market: "crypto",
+  market: "crypto_perp",
   page: 1,
   pageSize: 20,
   pages: 1,
@@ -269,7 +271,8 @@ function renderNewsSupport() {
 }
 
 function marketLine(asset) {
-  if (asset.market === "crypto") return `Crypto #${asset.rank || "-"} | ${asset.symbol}`;
+  if (asset.market === "crypto_spot") return `Crypto Spot #${asset.rank || "-"} | ${asset.symbol}`;
+  if (asset.market === "crypto_perp" || asset.market === "crypto") return `Bybit Perpetual #${asset.rank || "-"} | ${asset.symbol}`;
   if (asset.market === "indonesia") return `Saham Indonesia | IDX:${asset.symbol}`;
   return `Saham Amerika | ${asset.exchange}:${asset.symbol}`;
 }
@@ -395,7 +398,7 @@ async function loadScreen() {
     pageSize: String(state.pageSize),
     limit: "100",
     days: "365",
-    threshold: state.market === "crypto" ? "7" : "5"
+    threshold: state.market === "crypto_spot" || state.market === "crypto_perp" || state.market === "crypto" ? "7" : "5"
   });
 
   try {
@@ -716,8 +719,8 @@ async function openDetail(row) {
     market: state.market,
     id: asset.id,
     limit: "100",
-    days: state.market === "crypto" ? "365" : "730",
-    threshold: state.market === "crypto" ? "7" : "5"
+    days: state.market === "crypto_spot" || state.market === "crypto_perp" || state.market === "crypto" ? "365" : "730",
+    threshold: state.market === "crypto_spot" || state.market === "crypto_perp" || state.market === "crypto" ? "7" : "5"
   });
 
   try {

@@ -461,6 +461,63 @@ async function fetchWithTimeout(url, options = {}) {
   }
 }
 
+
+async function getBybitPerpetualAssets(limit = 100) {
+  const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 100);
+  const key = `crypto-perp-assets:bybit:${safeLimit}`;
+  const cached = getCached(key);
+  if (cached) return cached;
+
+  const url = new URL("https://api.bybit.com/v5/market/tickers");
+  url.searchParams.set("category", "linear");
+
+  const response = await fetchWithTimeout(url, { accept: "application/json", timeoutMs: 15000 });
+  const data = await response.json();
+
+  if (String(data.retCode) !== "0") {
+    throw new Error(data.retMsg || "Bybit perpetual ticker list unavailable");
+  }
+
+  const rows = (data.result?.list || [])
+    .filter((row) => String(row.symbol || "").endsWith("USDT"))
+    .filter((row) => Number(row.lastPrice) > 0)
+    .map((row) => {
+      const rawSymbol = String(row.symbol).replace(/USDT$/, "");
+      const symbol = rawSymbol.toUpperCase();
+      const turnover24h = Number(row.turnover24h || 0);
+      const change24h = Number(row.price24hPcnt || 0) * 100;
+      const currentPrice = Number(row.lastPrice || 0);
+
+      return {
+        id: symbol.toLowerCase(),
+        symbol,
+        name: symbol,
+        market: "crypto_perp",
+        rank: 0,
+        marketCap: null,
+        currency: "USD",
+        currentPrice,
+        change24h,
+        change7d: 0,
+        change30d: 0,
+        change1y: 0,
+        volume24h: turnover24h,
+        lastUpdated: new Date().toISOString(),
+        tvCandidates: [`BYBIT:${symbol}USDT.P`],
+        tvSymbol: `BYBIT:${symbol}USDT.P`,
+        tvProvider: "BYBIT",
+        bybitSymbol: `${symbol}USDT`
+      };
+    })
+    .sort((a, b) => Number(b.volume24h || 0) - Number(a.volume24h || 0))
+    .slice(0, safeLimit)
+    .map((asset, index) => ({ ...asset, rank: index + 1 }));
+
+  if (!rows.length) throw new Error("Bybit returned no USDT perpetual assets");
+  return setCached(key, rows);
+}
+
+
 async function getCryptoAssets(limit = 100) {
   const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 100);
   const key = `crypto-assets:coingecko:${safeLimit}`;
@@ -484,7 +541,7 @@ async function getCryptoAssets(limit = 100) {
         id: row.id,
         symbol,
         name: row.name,
-        market: "crypto",
+        market: "crypto_spot",
         rank: row.market_cap_rank,
         marketCap: row.market_cap,
         currency: "USD",
@@ -511,13 +568,15 @@ async function getCryptoAssets(limit = 100) {
 
 async function getAssets(market, limit = 100) {
   const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 100);
-  if (market === "crypto") return getCryptoAssets(limit);
+
+  if (market === "crypto_spot" || market === "spot") return getCryptoAssets(safeLimit);
+  if (market === "crypto_perp" || market === "crypto" || market === "perp") return getBybitPerpetualAssets(safeLimit);
   if (market === "stocks" || market === "us") return STOCKS.slice(0, safeLimit);
   if (market === "indonesia" || market === "idx") return INDONESIA_STOCKS.slice(0, safeLimit);
 
-  const cryptoResult = await Promise.allSettled([getCryptoAssets(safeLimit)]);
-  const crypto = cryptoResult[0].status === "fulfilled" ? cryptoResult[0].value : [];
-  return [...crypto, ...STOCKS.slice(0, safeLimit), ...INDONESIA_STOCKS.slice(0, safeLimit)];
+  const spotResult = await Promise.allSettled([getCryptoAssets(safeLimit)]);
+  const cryptoSpot = spotResult[0].status === "fulfilled" ? spotResult[0].value : [];
+  return [...cryptoSpot, ...STOCKS.slice(0, safeLimit), ...INDONESIA_STOCKS.slice(0, safeLimit)];
 }
 
 function dateToken(date) {
@@ -729,23 +788,35 @@ async function getCryptoHistory(asset, safeDays) {
 
 
 async function getHistory(asset, days = 730) {
-  const maxDays = asset.market === "crypto" ? 365 : 1825;
+  const maxDays = asset.market === "crypto_spot" || asset.market === "crypto_perp" || asset.market === "crypto" ? 365 : 1825;
   const safeDays = Math.min(Math.max(Number(days) || 730, 120), maxDays);
   const key = `history:${asset.market}:${asset.id}:${safeDays}`;
   const cached = getCached(key);
   if (cached) return cached;
   const staleCached = getStaleCached(key);
 
-  if (asset.market === "crypto") {
+  if (asset.market === "crypto_spot") {
     try {
-      const rows = await getCryptoHistory(asset, safeDays);
+      const rows = await getCoinGeckoHistory(asset, safeDays);
       if (rows.length) return setCached(key, rows);
     } catch (error) {
       if (typeof staleCached !== "undefined" && staleCached) return staleCached;
       throw error;
     }
     if (typeof staleCached !== "undefined" && staleCached) return staleCached;
-    throw new Error(`No daily crypto history found for ${asset.symbol}`);
+    throw new Error(`No daily spot crypto history found for ${asset.symbol}`);
+  }
+
+  if (asset.market === "crypto_perp" || asset.market === "crypto") {
+    try {
+      const rows = await getBybitHistory(asset, safeDays);
+      if (rows.length) return setCached(key, rows);
+    } catch (error) {
+      if (typeof staleCached !== "undefined" && staleCached) return staleCached;
+      throw error;
+    }
+    if (typeof staleCached !== "undefined" && staleCached) return staleCached;
+    throw new Error(`No Bybit perpetual history found for ${asset.symbol}`);
   }
 
   if (asset.market === "indonesia" || asset.exchange === "IDX") {
@@ -793,10 +864,10 @@ function mockAssets(market = "crypto", limit = 50) {
     : market === "indonesia" || market === "idx"
       ? INDONESIA_STOCKS
       : [
-    { id: "bitcoin", symbol: "BTC", name: "Bitcoin", market: "crypto", tvCandidates: cryptoTvCandidates("BTC"), tvSymbol: cryptoTvSymbol("BTC") },
-    { id: "ethereum", symbol: "ETH", name: "Ethereum", market: "crypto", tvCandidates: cryptoTvCandidates("ETH"), tvSymbol: cryptoTvSymbol("ETH") },
-    { id: "solana", symbol: "SOL", name: "Solana", market: "crypto", tvCandidates: cryptoTvCandidates("SOL"), tvSymbol: cryptoTvSymbol("SOL") },
-    { id: "ripple", symbol: "XRP", name: "XRP", market: "crypto", tvCandidates: cryptoTvCandidates("XRP"), tvSymbol: cryptoTvSymbol("XRP") }
+    { id: "bitcoin", symbol: "BTC", name: "Bitcoin", market: "crypto_perp", tvCandidates: cryptoTvCandidates("BTC"), tvSymbol: cryptoTvSymbol("BTC") },
+    { id: "ethereum", symbol: "ETH", name: "Ethereum", market: "crypto_perp", tvCandidates: cryptoTvCandidates("ETH"), tvSymbol: cryptoTvSymbol("ETH") },
+    { id: "solana", symbol: "SOL", name: "Solana", market: "crypto_perp", tvCandidates: cryptoTvCandidates("SOL"), tvSymbol: cryptoTvSymbol("SOL") },
+    { id: "ripple", symbol: "XRP", name: "XRP", market: "crypto_perp", tvCandidates: cryptoTvCandidates("XRP"), tvSymbol: cryptoTvSymbol("XRP") }
   ];
   return Array.from({ length: Math.min(Number(limit) || 8, 100) }, (_, index) => {
     const template = base[index % base.length];
@@ -1477,7 +1548,7 @@ function buildUnavailableRow(asset, message = "Data historis perpetual belum ter
 
 
 function analysisDays(asset, days) {
-  const maxDays = asset.market === "crypto" ? 365 : 1825;
+  const maxDays = asset.market === "crypto_spot" || asset.market === "crypto_perp" || asset.market === "crypto" ? 365 : 1825;
   return Math.min(Math.max(Number(days) || 730, 120), maxDays);
 }
 
@@ -1524,7 +1595,7 @@ async function mapLimit(items, limit, worker) {
         results[index] = await worker(items[index], index);
       } catch (error) {
         const item = items[index];
-        if (item?.market === "crypto" && typeof buildUnavailableRow === "function") {
+        if (item?.market === "crypto_spot" && typeof buildUnavailableRow === "function") {
           results[index] = buildUnavailableRow(item, error.message);
         } else {
           results[index] = { item, error: error.message };
@@ -1571,7 +1642,7 @@ async function getNewsItems(asset, market, maxItems = 10) {
   const cached = getCached(key);
   if (cached) return cached;
 
-  const query = market === "crypto"
+  const query = (market === "crypto" || market === "crypto_spot" || market === "crypto_perp")
     ? `${asset.name} ${asset.symbol} crypto news market`
     : market === "indonesia"
       ? `${asset.name} ${asset.symbol} saham IDX dividen aksi korporasi`
@@ -1609,8 +1680,9 @@ async function handleApi(req, res, url) {
     const total = assets.length;
     const pages = Math.max(Math.ceil(total / pageSize), 1);
     const pageAssets = assets.slice((page - 1) * pageSize, page * pageSize);
-    const rows = await mapLimit(pageAssets, market === "crypto" ? 2 : 5, async (asset, index) => {
-      const candles = useMock ? mockHistory(index + 1, Math.min(days, 365)) : await getHistory(asset, Math.min(days, 365));
+    const rows = await mapLimit(pageAssets, market === "crypto_perp" || market === "crypto" || market === "crypto_spot" ? 1 : 5, async (asset, index) => {
+      if (!useMock && index > 0) await delay(market === "crypto_perp" || market === "crypto" || market === "crypto_spot" ? 250 : 650);
+      const candles = useMock ? mockHistory(index + 1, analysisDays(asset, days)) : await getHistory(asset, analysisDays(asset, days));
       return withPreviousAnalysis(asset, candles, threshold);
     });
     const results = rows.filter((row) => row && !row.error);
@@ -1625,7 +1697,7 @@ async function handleApi(req, res, url) {
       pageSize,
       total,
       pages,
-      source: useMock ? "mock" : market === "crypto" ? "Perpetual OHLC: Bybit/Binance/OKX" : "Stooq/Yahoo",
+      source: useMock ? "mock" : market === "crypto_spot" ? "CoinGecko Spot" : market === "crypto_perp" || market === "crypto" ? "Bybit Perpetual" : "Stooq/Yahoo",
       elapsedMs: Date.now() - startedAt,
       results,
       errors
@@ -1684,7 +1756,7 @@ async function handleApi(req, res, url) {
   if (path === "/api/scan") {
     const startedAt = Date.now();
     const assets = useMock ? mockAssets(market, limit) : await getAssets(market, limit);
-    const rows = await mapLimit(assets.slice(0, limit), market === "crypto" ? 3 : 6, async (asset, index) => {
+    const rows = await mapLimit(assets.slice(0, limit), market === "crypto_perp" || market === "crypto" || market === "crypto_spot" ? 1 : 6, async (asset, index) => {
       const candles = useMock ? mockHistory(index + 1, days) : await getHistory(asset, days);
       return analyzeAsset(asset, candles, threshold);
     });
@@ -1702,7 +1774,7 @@ async function handleApi(req, res, url) {
       limit,
       days,
       threshold,
-      source: useMock ? "mock" : market === "crypto" ? "CoinGecko" : "Stooq",
+      source: useMock ? "mock" : market === "crypto_spot" ? "CoinGecko Spot" : market === "crypto_perp" || market === "crypto" ? "Bybit Perpetual" : "Stooq",
       elapsedMs: Date.now() - startedAt,
       results,
       errors
