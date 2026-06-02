@@ -428,6 +428,12 @@ function getCached(key) {
   return entry.value;
 }
 
+function getStaleCached(key, maxAgeMs = 24 * 60 * 60 * 1000) {
+  const entry = cache.get(key);
+  if (!entry || Date.now() - entry.createdAt > maxAgeMs) return null;
+  return entry.value;
+}
+
 function setCached(key, value) {
   cache.set(key, { createdAt: Date.now(), value });
   return value;
@@ -554,187 +560,50 @@ async function getYahooHistory(symbol, safeDays) {
   return rows.slice(-safeDays);
 }
 
-
-function applyCurrentPriceToRows(rows, asset) {
-  const output = rows
-    .filter((row) => Number.isFinite(Number(row.close)) && Number(row.close) > 0)
-    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
-
-  if (output.length && Number.isFinite(Number(asset.currentPrice)) && Number(asset.currentPrice) > 0) {
-    const currentPrice = Number(asset.currentPrice);
-    const last = output[output.length - 1];
-    output[output.length - 1] = {
-      ...last,
-      close: currentPrice,
-      high: Math.max(Number(last.high), currentPrice),
-      low: Math.min(Number(last.low), currentPrice)
-    };
-  }
-
-  return output;
-}
-
-function cryptoSpotSymbol(asset) {
-  return String(asset.symbol || "")
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/g, "");
-}
-
-async function getCoinGeckoHistory(asset, safeDays) {
-  const url = new URL(`https://api.coingecko.com/api/v3/coins/${asset.id}/market_chart`);
-  url.searchParams.set("vs_currency", "usd");
-  url.searchParams.set("days", String(safeDays));
-  url.searchParams.set("interval", "daily");
-
-  const response = await fetchWithTimeout(url, { accept: "application/json", timeoutMs: 10000 });
-  const data = await response.json();
-  const rows = (data.prices || []).map(([timestamp, price]) => ({
-    date: new Date(timestamp).toISOString().slice(0, 10),
-    open: Number(price),
-    high: Number(price),
-    low: Number(price),
-    close: Number(price),
-    volume: 0
-  }));
-
-  const output = applyCurrentPriceToRows(rows, asset);
-  if (!output.length) throw new Error(`No CoinGecko daily crypto history found for ${asset.symbol}`);
-  return output;
-}
-
-async function getBybitHistory(asset, safeDays) {
-  const symbol = `${cryptoSpotSymbol(asset)}USDT`;
-  const url = new URL("https://api.bybit.com/v5/market/kline");
-  url.searchParams.set("category", "linear");
-  url.searchParams.set("symbol", symbol);
-  url.searchParams.set("interval", "D");
-  url.searchParams.set("limit", String(Math.min(safeDays, 1000)));
-
-  const response = await fetchWithTimeout(url, { accept: "application/json", timeoutMs: 10000 });
-  const data = await response.json();
-
-  if (String(data.retCode) !== "0") {
-    throw new Error(data.retMsg || `Bybit rejected ${symbol}`);
-  }
-
-  const rows = (data.result?.list || []).map((item) => ({
-    date: new Date(Number(item[0])).toISOString().slice(0, 10),
-    open: Number(item[1]),
-    high: Number(item[2]),
-    low: Number(item[3]),
-    close: Number(item[4]),
-    volume: Number(item[5] || 0)
-  }));
-
-  const output = applyCurrentPriceToRows(rows, asset).slice(-safeDays);
-  if (!output.length) throw new Error(`No Bybit daily crypto history found for ${asset.symbol}`);
-  return output;
-}
-
-async function getOkxHistory(asset, safeDays) {
-  const symbol = cryptoSpotSymbol(asset);
-  const candidates = [`${symbol}-USDT-SWAP`, `${symbol}-USDT`];
-
-  for (const instrument of candidates) {
-    try {
-      const url = new URL("https://www.okx.com/api/v5/market/history-candles");
-      url.searchParams.set("instId", instrument);
-      url.searchParams.set("bar", "1Dutc");
-      url.searchParams.set("limit", String(Math.min(safeDays, 300)));
-
-      const response = await fetchWithTimeout(url, { accept: "application/json", timeoutMs: 10000 });
-      const data = await response.json();
-
-      if (String(data.code) !== "0") {
-        throw new Error(data.msg || `OKX rejected ${instrument}`);
-      }
-
-      const rows = (data.data || []).map((item) => ({
-        date: new Date(Number(item[0])).toISOString().slice(0, 10),
-        open: Number(item[1]),
-        high: Number(item[2]),
-        low: Number(item[3]),
-        close: Number(item[4]),
-        volume: Number(item[5] || 0)
-      }));
-
-      const output = applyCurrentPriceToRows(rows, asset).slice(-safeDays);
-      if (output.length) return output;
-    } catch {
-      // Try next OKX instrument form.
-    }
-  }
-
-  throw new Error(`No OKX daily crypto history found for ${asset.symbol}`);
-}
-
-async function getBinanceHistory(asset, safeDays) {
-  const symbol = `${cryptoSpotSymbol(asset)}USDT`;
-  const url = new URL("https://api.binance.com/api/v3/klines");
-  url.searchParams.set("symbol", symbol);
-  url.searchParams.set("interval", "1d");
-  url.searchParams.set("limit", String(Math.min(safeDays, 1000)));
-
-  const response = await fetchWithTimeout(url, { accept: "application/json", timeoutMs: 10000 });
-  const data = await response.json();
-
-  if (!Array.isArray(data)) {
-    throw new Error(data.msg || `Binance rejected ${symbol}`);
-  }
-
-  const rows = data.map((item) => ({
-    date: new Date(Number(item[0])).toISOString().slice(0, 10),
-    open: Number(item[1]),
-    high: Number(item[2]),
-    low: Number(item[3]),
-    close: Number(item[4]),
-    volume: Number(item[5] || 0)
-  }));
-
-  const output = applyCurrentPriceToRows(rows, asset).slice(-safeDays);
-  if (!output.length) throw new Error(`No Binance daily crypto history found for ${asset.symbol}`);
-  return output;
-}
-
-async function getCryptoHistory(asset, safeDays) {
-  const providers = [
-    ["CoinGecko", () => getCoinGeckoHistory(asset, safeDays)],
-    ["Bybit", () => getBybitHistory(asset, safeDays)],
-    ["OKX", () => getOkxHistory(asset, safeDays)],
-    ["Binance", () => getBinanceHistory(asset, safeDays)]
-  ];
-
-  const errors = [];
-
-  for (const [provider, loader] of providers) {
-    try {
-      const rows = await loader();
-      if (rows.length) return rows;
-    } catch (error) {
-      errors.push(`${provider}: ${error.message}`);
-    }
-  }
-
-  throw new Error(`No crypto history found for ${asset.symbol}. Tried CoinGecko, Bybit, OKX, Binance. ${errors.join(" | ")}`);
-}
-
-
 async function getHistory(asset, days = 730) {
   const maxDays = asset.market === "crypto" ? 365 : 1825;
   const safeDays = Math.min(Math.max(Number(days) || 730, 120), maxDays);
   const key = `history:${asset.market}:${asset.id}:${safeDays}`;
   const cached = getCached(key);
   if (cached) return cached;
+  const staleCached = getStaleCached(key);
 
   if (asset.market === "crypto") {
-    const rows = await getCryptoHistory(asset, safeDays);
+    const url = new URL(`https://api.coingecko.com/api/v3/coins/${asset.id}/market_chart`);
+    url.searchParams.set("vs_currency", "usd");
+    url.searchParams.set("days", String(safeDays));
+    url.searchParams.set("interval", "daily");
+    const response = await fetchWithTimeout(url, { accept: "application/json" });
+    const data = await response.json();
+    const rows = (data.prices || []).map(([timestamp, price]) => ({
+      date: new Date(timestamp).toISOString().slice(0, 10),
+      open: Number(price),
+      high: Number(price),
+      low: Number(price),
+      close: Number(price),
+      volume: 0
+    })).filter((row) => Number.isFinite(row.close) && row.close > 0);
+    if (rows.length && Number.isFinite(asset.currentPrice) && asset.currentPrice > 0) {
+      rows[rows.length - 1] = {
+        ...rows[rows.length - 1],
+        close: asset.currentPrice,
+        high: Math.max(rows[rows.length - 1].high, asset.currentPrice),
+        low: Math.min(rows[rows.length - 1].low, asset.currentPrice)
+      };
+    }
     if (rows.length) return setCached(key, rows);
-    throw new Error(`No daily crypto history found for ${asset.symbol}`);
+    throw new Error(`No CoinGecko daily crypto history found for ${asset.symbol}`);
   }
 
   if (asset.market === "indonesia" || asset.exchange === "IDX") {
-    const rows = await getYahooHistory(asset.yahoo || `${asset.symbol}.JK`, safeDays);
-    if (rows.length) return setCached(key, rows);
+    try {
+      const rows = await getYahooHistory(asset.yahoo || `${asset.symbol}.JK`, safeDays);
+      if (rows.length) return setCached(key, rows);
+    } catch (error) {
+      if (staleCached) return staleCached;
+      throw error;
+    }
+    if (staleCached) return staleCached;
     throw new Error(`No daily stock history found for ${asset.symbol}`);
   }
 
@@ -1238,21 +1107,13 @@ function analyzeFullAsset(asset, candles, threshold) {
 function analyzePreviousAsset(asset, candles, threshold) {
   const previousCandles = Array.isArray(candles) ? candles.slice(0, -1) : [];
   if (previousCandles.length < 120) return null;
-
   const previousClose = previousCandles.at(-1)?.close;
-  const previousDate = previousCandles.at(-1)?.date;
-  const previousAsset = {
-    ...asset,
-    currentPrice: Number.isFinite(Number(previousClose)) ? Number(previousClose) : asset.currentPrice,
-    tvPrice: Number.isFinite(Number(previousClose)) ? Number(previousClose) : asset.tvPrice,
-    close: Number.isFinite(Number(previousClose)) ? Number(previousClose) : asset.close,
-    lastUpdated: previousDate || asset.lastUpdated
-  };
-
+  const previousAsset = Number.isFinite(Number(previousClose))
+    ? { ...asset, currentPrice: Number(previousClose), tvPrice: Number(previousClose), close: Number(previousClose) }
+    : { ...asset };
   return {
     ...analyzeFullAsset(previousAsset, previousCandles, threshold),
-    label: "24 jam yang lalu",
-    sourceDate: previousDate || ""
+    label: "24 jam yang lalu"
   };
 }
 
@@ -1524,32 +1385,6 @@ async function handleApi(req, res, url) {
     const total = assets.length;
     const pages = Math.max(Math.ceil(total / pageSize), 1);
     const pageAssets = assets.slice((page - 1) * pageSize, page * pageSize);
-    if (!useMock && market === "crypto") {
-      const rows = await mapLimit(pageAssets, 1, async (asset, index) => {
-        if (index > 0) await delay(650);
-        const result = await getConsistentAnalysis(asset, Math.min(days, 365), threshold);
-        const { history, ...screenRow } = result;
-        return screenRow;
-      });
-      const results = rows.filter((row) => row && !row.error);
-      const errors = rows.filter((row) => row?.error).map((row) => ({
-        symbol: row.item?.symbol,
-        message: row.error
-      }));
-
-      json(res, 200, {
-        market,
-        page,
-        pageSize,
-        total,
-        pages,
-        source: "CoinGecko/Bybit/OKX/Binance 1D",
-        elapsedMs: Date.now() - startedAt,
-        results,
-        errors
-      });
-      return;
-    }
     const rows = await mapLimit(pageAssets, market === "crypto" ? 2 : 5, async (asset, index) => {
       const candles = useMock ? mockHistory(index + 1, Math.min(days, 365)) : await getHistory(asset, Math.min(days, 365));
       return withPreviousAnalysis(asset, candles, threshold);
@@ -1566,7 +1401,7 @@ async function handleApi(req, res, url) {
       pageSize,
       total,
       pages,
-      source: useMock ? "mock" : market === "crypto" ? "CoinGecko" : "Stooq/Yahoo",
+      source: useMock ? "mock" : market === "crypto" ? "Perpetual OHLC: Bybit/Binance/OKX" : "Stooq/Yahoo",
       elapsedMs: Date.now() - startedAt,
       results,
       errors
