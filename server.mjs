@@ -27,7 +27,8 @@ async function resolveCryptoTvSymbols(assets) {
 
   try {
     const available = new Set();
-    const tvPriceBySymbol = new Map();
+    const tvDataBySymbol = new Map();
+
     for (let index = 0; index < candidates.length; index += 200) {
       const response = await fetchWithTimeout("https://scanner.tradingview.com/crypto/scan", {
         method: "POST",
@@ -38,28 +39,41 @@ async function resolveCryptoTvSymbols(assets) {
             tickers: candidates.slice(index, index + 200),
             query: { types: [] }
           },
-          columns: ["close"]
+          columns: ["close", "change", "Perf.W", "Perf.1M", "volume"]
         }),
         timeoutMs: 10000
       });
+
       const payload = await response.json();
       for (const item of payload.data || []) {
         available.add(item.s);
-        tvPriceBySymbol.set(item.s, Number(item.d?.[0] || 0));
+        tvDataBySymbol.set(item.s, {
+          close: Number(item.d?.[0] || 0),
+          change24h: Number(item.d?.[1] || 0),
+          change7d: Number(item.d?.[2] || 0),
+          change30d: Number(item.d?.[3] || 0),
+          volume24h: Number(item.d?.[4] || 0)
+        });
       }
     }
 
     return assets.map((asset) => {
       const assetCandidates = asset.tvCandidates || cryptoTvCandidates(asset.symbol);
       const tvSymbol = assetCandidates.find((candidate) => available.has(candidate)) || "";
-      const tvPrice = Number(tvPriceBySymbol.get(tvSymbol) || 0);
+      const tvData = tvDataBySymbol.get(tvSymbol) || {};
+      const tvPrice = Number(tvData.close || 0);
+
       return {
         ...asset,
         tvSymbol,
         tvCandidates: assetCandidates,
         tvProvider: tvSymbol ? tvSymbol.split(":")[0] : "",
         currentPrice: Number(asset.currentPrice) > 0 ? Number(asset.currentPrice) : tvPrice,
-        tvPrice
+        tvPrice,
+        change24h: Number.isFinite(Number(asset.change24h)) && Number(asset.change24h) !== 0 ? Number(asset.change24h) : Number(tvData.change24h || 0),
+        change7d: Number.isFinite(Number(asset.change7d)) && Number(asset.change7d) !== 0 ? Number(asset.change7d) : Number(tvData.change7d || 0),
+        change30d: Number.isFinite(Number(asset.change30d)) && Number(asset.change30d) !== 0 ? Number(asset.change30d) : Number(tvData.change30d || 0),
+        volume24h: Number(asset.volume24h || 0) > 0 ? Number(asset.volume24h) : Number(tvData.volume24h || 0)
       };
     });
   } catch {
@@ -554,9 +568,9 @@ async function getBybitPerpetualAssets(limit = 100) {
       .map((asset, index) => ({ ...asset, rank: index + 1 }));
 
     if (!rows.length) throw new Error("Bybit returned no USDT perpetual assets");
-    return setCached(key, rows);
+    return setCached(key, await resolveCryptoTvSymbols(rows));
   } catch (error) {
-    const fallback = fallbackBybitPerpetualAssets(safeLimit);
+    const fallback = await resolveCryptoTvSymbols(fallbackBybitPerpetualAssets(safeLimit));
     return setCached(key, fallback);
   }
 }
@@ -604,7 +618,7 @@ async function getCryptoAssets(limit = 100) {
     if (!assets.length) throw new Error("CoinGecko returned no crypto assets");
     return setCached(key, await resolveCryptoTvSymbols(assets));
   } catch (error) {
-    const fallback = CRYPTO_FALLBACK.slice(0, safeLimit).map((asset) => ({ ...asset }));
+    const fallback = CRYPTO_FALLBACK.slice(0, safeLimit).map((asset) => ({ ...asset, market: "crypto_spot" }));
     if (fallback.length) return setCached(key, await resolveCryptoTvSymbols(fallback));
     throw new Error(`CoinGecko crypto asset list unavailable: ${error.message}`);
   }
@@ -714,7 +728,7 @@ async function getCoinGeckoHistory(asset, safeDays) {
 }
 
 async function getBybitHistory(asset, safeDays) {
-  const symbol = `${cryptoPerpSymbol(asset)}USDT`;
+  const symbol = asset.bybitSymbol || `${cryptoPerpSymbol(asset)}USDT`;
   const url = new URL("https://api.bybit.com/v5/market/kline");
   url.searchParams.set("category", "linear");
   url.searchParams.set("symbol", symbol);
@@ -1401,24 +1415,27 @@ function buildCryptoScreenRow(asset) {
   const change24h = percentValue(asset.change24h);
   const change7d = percentValue(asset.change7d);
   const change30d = percentValue(asset.change30d);
-  const hasMarketMove = close > 0 && (Math.abs(change24h) > 0 || Math.abs(change7d) > 0 || Math.abs(change30d) > 0);
-  if (!hasMarketMove) {
+  const hasPrice = close > 0;
+  const hasMarketMove = hasPrice && (Math.abs(change24h) > 0 || Math.abs(change7d) > 0 || Math.abs(change30d) > 0);
+  if (!hasPrice) {
     return buildUnavailableRow(asset, asset.sourceWarning || "Market/ticker data belum tersedia.");
   }
-  const trendScore = change30d * 0.5 + change7d * 0.35 + change24h * 0.15;
+  const trendScore = hasMarketMove ? change30d * 0.5 + change7d * 0.35 + change24h * 0.15 : change24h;
   const volatility = Math.max(Math.abs(change24h), Math.abs(change7d) / 2, Math.abs(change30d) / 4);
   const isStableLike = close > 0.85 && close < 1.15 && volatility < 2.5;
-  const bullish = trendScore >= 0;
+  const bullish = hasMarketMove ? trendScore >= 0 : false;
   const side = bullish ? "Long" : "Short";
-  const confidence = isStableLike
-    ? 28
-    : Math.min(
-        88,
-        Math.max(
-          42,
-          Math.round(54 + Math.min(Math.abs(trendScore) * 1.35, 24) + (Math.sign(change7d) === Math.sign(change30d) ? 8 : 0))
-        )
-      );
+  const confidence = !hasMarketMove
+    ? 35
+    : isStableLike
+      ? 28
+      : Math.min(
+          88,
+          Math.max(
+            42,
+            Math.round(54 + Math.min(Math.abs(trendScore) * 1.35, 24) + (Math.sign(change7d) === Math.sign(change30d) ? 8 : 0))
+          )
+        );
   const tradable = !isStableLike && confidence >= 50;
   const isCurrentlyIdeal = tradable && Math.abs(change24h) <= 4.5 && Math.abs(change7d) <= 16;
   const riskPercent = Math.max(2.5, Math.min(9, volatility * 0.6));
@@ -1643,11 +1660,7 @@ async function mapLimit(items, limit, worker) {
         results[index] = await worker(items[index], index);
       } catch (error) {
         const item = items[index];
-        if (item?.market === "crypto_spot" && typeof buildUnavailableRow === "function") {
-          results[index] = buildUnavailableRow(item, error.message);
-        } else {
-          results[index] = { item, error: error.message };
-        }
+        results[index] = { item, error: error.message };
       }
     }
   }
@@ -1728,7 +1741,7 @@ async function handleApi(req, res, url) {
     const total = assets.length;
     const pages = Math.max(Math.ceil(total / pageSize), 1);
     const pageAssets = assets.slice((page - 1) * pageSize, page * pageSize);
-    if (!useMock && (market === "crypto_spot" || market === "crypto_perp" || market === "crypto")) {
+    if (!useMock && market === "crypto_spot") {
       const results = pageAssets.map((asset) => ({
         ...buildCryptoScreenRow(asset),
         previous: null
@@ -1739,7 +1752,7 @@ async function handleApi(req, res, url) {
         pageSize,
         total,
         pages,
-        source: market === "crypto_spot" ? "CoinGecko Spot Fast Screening" : "Bybit Perpetual Fast Screening",
+        source: "CoinGecko Spot Fast Screening",
         elapsedMs: Date.now() - startedAt,
         results,
         errors: []
@@ -1747,9 +1760,12 @@ async function handleApi(req, res, url) {
       return;
     }
     const rows = await mapLimit(pageAssets, market === "crypto_perp" || market === "crypto" || market === "crypto_spot" ? 1 : 5, async (asset, index) => {
-      if (!useMock && index > 0) await delay(market === "crypto_perp" || market === "crypto" || market === "crypto_spot" ? 250 : 650);
-      const candles = useMock ? mockHistory(index + 1, analysisDays(asset, days)) : await getHistory(asset, analysisDays(asset, days));
-      return withPreviousAnalysis(asset, candles, threshold);
+      if (!useMock && index > 0) await delay(market === "crypto_perp" || market === "crypto" || market === "crypto_spot" ? 650 : 650);
+      const safeDays = analysisDays(asset, days);
+      const candles = useMock ? mockHistory(index + 1, safeDays) : await getHistory(asset, safeDays);
+      return typeof withPreviousAnalysis === "function"
+        ? withPreviousAnalysis(asset, candles, threshold)
+        : analyzeFullAsset(asset, candles, threshold);
     });
     const results = rows.filter((row) => row && !row.error);
     const errors = rows.filter((row) => row?.error).map((row) => ({
@@ -1763,7 +1779,7 @@ async function handleApi(req, res, url) {
       pageSize,
       total,
       pages,
-      source: useMock ? "mock" : market === "crypto_spot" ? "CoinGecko Spot" : market === "crypto_perp" || market === "crypto" ? "Bybit Perpetual" : "Stooq/Yahoo",
+      source: useMock ? "mock" : market === "crypto_spot" ? "CoinGecko Spot" : market === "crypto_perp" || market === "crypto" ? "Bybit Perpetual 1D" : "Stooq/Yahoo",
       elapsedMs: Date.now() - startedAt,
       results,
       errors
