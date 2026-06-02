@@ -462,6 +462,45 @@ async function fetchWithTimeout(url, options = {}) {
 }
 
 
+const BYBIT_PERP_FALLBACK_SYMBOLS = [
+  "BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "SUI", "HYPE", "ADA", "LINK",
+  "AVAX", "BCH", "LTC", "DOT", "NEAR", "APT", "ARB", "OP", "INJ", "RENDER",
+  "FET", "WIF", "PEPE", "TIA", "ONDO", "ENA", "SEI", "JUP", "PYTH", "RUNE",
+  "FIL", "ATOM", "AAVE", "UNI", "ETC", "ICP", "TAO", "WLD", "MKR", "VET",
+  "GRT", "ALGO", "STX", "QNT", "LDO", "BONK", "SAND", "MANA", "THETA", "HBAR",
+  "EOS", "BSV", "NEXO", "XTZ", "PAXG", "CRO", "MNT", "RAY", "JASMY", "FLOW",
+  "BEAM", "AXS", "EGLD", "STRK", "DYDX", "MOVE", "CORE", "FLR", "ENS", "KAVA",
+  "MINA", "NEO", "CHZ", "CAKE", "PENDLE", "GALA", "ZEC", "DASH", "ROSE", "FTM",
+  "IMX", "ETHFI", "ORDI", "NOT", "TON", "XLM", "TRX", "SHIB", "POL", "MATIC",
+  "MORPHO", "KAITO", "VIRTUAL", "CRV", "LDO", "COMP", "SUSHI", "YFI", "SNX", "ZRO"
+];
+
+function fallbackBybitPerpetualAssets(limit = 100) {
+  const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 100);
+  return BYBIT_PERP_FALLBACK_SYMBOLS.slice(0, safeLimit).map((symbol, index) => ({
+    id: symbol.toLowerCase(),
+    symbol,
+    name: symbol,
+    market: "crypto_perp",
+    rank: index + 1,
+    marketCap: null,
+    currency: "USD",
+    currentPrice: 0,
+    change24h: 0,
+    change7d: 0,
+    change30d: 0,
+    change1y: 0,
+    volume24h: 0,
+    lastUpdated: new Date().toISOString(),
+    tvCandidates: [`BYBIT:${symbol}USDT.P`],
+    tvSymbol: `BYBIT:${symbol}USDT.P`,
+    tvProvider: "BYBIT",
+    bybitSymbol: `${symbol}USDT`,
+    sourceWarning: "Fallback static Bybit perpetual universe. Live Bybit ticker API unavailable."
+  }));
+}
+
+
 async function getBybitPerpetualAssets(limit = 100) {
   const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 100);
   const key = `crypto-perp-assets:bybit:${safeLimit}`;
@@ -471,50 +510,55 @@ async function getBybitPerpetualAssets(limit = 100) {
   const url = new URL("https://api.bybit.com/v5/market/tickers");
   url.searchParams.set("category", "linear");
 
-  const response = await fetchWithTimeout(url, { accept: "application/json", timeoutMs: 15000 });
-  const data = await response.json();
+  try {
+    const response = await fetchWithTimeout(url, { accept: "application/json", timeoutMs: 15000 });
+    const data = await response.json();
 
-  if (String(data.retCode) !== "0") {
-    throw new Error(data.retMsg || "Bybit perpetual ticker list unavailable");
+    if (String(data.retCode) !== "0") {
+      throw new Error(data.retMsg || "Bybit perpetual ticker list unavailable");
+    }
+
+    const rows = (data.result?.list || [])
+      .filter((row) => String(row.symbol || "").endsWith("USDT"))
+      .filter((row) => Number(row.lastPrice) > 0)
+      .map((row) => {
+        const rawSymbol = String(row.symbol).replace(/USDT$/, "");
+        const symbol = rawSymbol.toUpperCase();
+        const turnover24h = Number(row.turnover24h || 0);
+        const change24h = Number(row.price24hPcnt || 0) * 100;
+        const currentPrice = Number(row.lastPrice || 0);
+
+        return {
+          id: symbol.toLowerCase(),
+          symbol,
+          name: symbol,
+          market: "crypto_perp",
+          rank: 0,
+          marketCap: null,
+          currency: "USD",
+          currentPrice,
+          change24h,
+          change7d: 0,
+          change30d: 0,
+          change1y: 0,
+          volume24h: turnover24h,
+          lastUpdated: new Date().toISOString(),
+          tvCandidates: [`BYBIT:${symbol}USDT.P`],
+          tvSymbol: `BYBIT:${symbol}USDT.P`,
+          tvProvider: "BYBIT",
+          bybitSymbol: `${symbol}USDT`
+        };
+      })
+      .sort((a, b) => Number(b.volume24h || 0) - Number(a.volume24h || 0))
+      .slice(0, safeLimit)
+      .map((asset, index) => ({ ...asset, rank: index + 1 }));
+
+    if (!rows.length) throw new Error("Bybit returned no USDT perpetual assets");
+    return setCached(key, rows);
+  } catch (error) {
+    const fallback = fallbackBybitPerpetualAssets(safeLimit);
+    return setCached(key, fallback);
   }
-
-  const rows = (data.result?.list || [])
-    .filter((row) => String(row.symbol || "").endsWith("USDT"))
-    .filter((row) => Number(row.lastPrice) > 0)
-    .map((row) => {
-      const rawSymbol = String(row.symbol).replace(/USDT$/, "");
-      const symbol = rawSymbol.toUpperCase();
-      const turnover24h = Number(row.turnover24h || 0);
-      const change24h = Number(row.price24hPcnt || 0) * 100;
-      const currentPrice = Number(row.lastPrice || 0);
-
-      return {
-        id: symbol.toLowerCase(),
-        symbol,
-        name: symbol,
-        market: "crypto_perp",
-        rank: 0,
-        marketCap: null,
-        currency: "USD",
-        currentPrice,
-        change24h,
-        change7d: 0,
-        change30d: 0,
-        change1y: 0,
-        volume24h: turnover24h,
-        lastUpdated: new Date().toISOString(),
-        tvCandidates: [`BYBIT:${symbol}USDT.P`],
-        tvSymbol: `BYBIT:${symbol}USDT.P`,
-        tvProvider: "BYBIT",
-        bybitSymbol: `${symbol}USDT`
-      };
-    })
-    .sort((a, b) => Number(b.volume24h || 0) - Number(a.volume24h || 0))
-    .slice(0, safeLimit)
-    .map((asset, index) => ({ ...asset, rank: index + 1 }));
-
-  if (!rows.length) throw new Error("Bybit returned no USDT perpetual assets");
-  return setCached(key, rows);
 }
 
 
@@ -1357,6 +1401,10 @@ function buildCryptoScreenRow(asset) {
   const change24h = percentValue(asset.change24h);
   const change7d = percentValue(asset.change7d);
   const change30d = percentValue(asset.change30d);
+  const hasMarketMove = close > 0 && (Math.abs(change24h) > 0 || Math.abs(change7d) > 0 || Math.abs(change30d) > 0);
+  if (!hasMarketMove) {
+    return buildUnavailableRow(asset, asset.sourceWarning || "Market/ticker data belum tersedia.");
+  }
   const trendScore = change30d * 0.5 + change7d * 0.35 + change24h * 0.15;
   const volatility = Math.max(Math.abs(change24h), Math.abs(change7d) / 2, Math.abs(change30d) / 4);
   const isStableLike = close > 0.85 && close < 1.15 && volatility < 2.5;
@@ -1680,6 +1728,24 @@ async function handleApi(req, res, url) {
     const total = assets.length;
     const pages = Math.max(Math.ceil(total / pageSize), 1);
     const pageAssets = assets.slice((page - 1) * pageSize, page * pageSize);
+    if (!useMock && (market === "crypto_spot" || market === "crypto_perp" || market === "crypto")) {
+      const results = pageAssets.map((asset) => ({
+        ...buildCryptoScreenRow(asset),
+        previous: null
+      }));
+      json(res, 200, {
+        market,
+        page,
+        pageSize,
+        total,
+        pages,
+        source: market === "crypto_spot" ? "CoinGecko Spot Fast Screening" : "Bybit Perpetual Fast Screening",
+        elapsedMs: Date.now() - startedAt,
+        results,
+        errors: []
+      });
+      return;
+    }
     const rows = await mapLimit(pageAssets, market === "crypto_perp" || market === "crypto" || market === "crypto_spot" ? 1 : 5, async (asset, index) => {
       if (!useMock && index > 0) await delay(market === "crypto_perp" || market === "crypto" || market === "crypto_spot" ? 250 : 650);
       const candles = useMock ? mockHistory(index + 1, analysisDays(asset, days)) : await getHistory(asset, analysisDays(asset, days));
