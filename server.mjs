@@ -817,18 +817,11 @@ async function getOkxHistory(asset, safeDays) {
 }
 
 async function getCryptoHistory(asset, safeDays) {
-  const symbol = cryptoPerpSymbol(asset);
-  const isStableLike = ["USDT", "USDC", "DAI", "FDUSD", "USDD", "WETH", "WBTC"].includes(symbol);
-  const providers = isStableLike
-    ? [
-        ["CoinGecko Spot", () => getCoinGeckoHistory(asset, safeDays)]
-      ]
-    : [
-        ["Bybit Perpetual", () => getBybitHistory(asset, safeDays)],
-        ["Binance Perpetual", () => getBinanceHistory(asset, safeDays)],
-        ["OKX Perpetual", () => getOkxHistory(asset, safeDays)],
-        ["CoinGecko Spot", () => getCoinGeckoHistory(asset, safeDays)]
-      ];
+  const providers = [
+    ["Bybit Perpetual", () => getBybitHistory(asset, safeDays)],
+    ["Binance Perpetual", () => getBinanceHistory(asset, safeDays)],
+    ["OKX Perpetual", () => getOkxHistory(asset, safeDays)]
+  ];
 
   const errors = [];
 
@@ -841,7 +834,7 @@ async function getCryptoHistory(asset, safeDays) {
     }
   }
 
-  throw new Error(`No crypto history found for ${asset.symbol}. ${errors.join(" | ")}`);
+  throw new Error(`No perpetual history found for ${asset.symbol}. ${errors.join(" | ")}`);
 }
 
 
@@ -867,14 +860,16 @@ async function getHistory(asset, days = 730) {
 
   if (asset.market === "crypto_perp" || asset.market === "crypto") {
     try {
-      const rows = await getBybitHistory(asset, safeDays);
+      const rows = typeof getCryptoHistory === "function"
+        ? await getCryptoHistory(asset, safeDays)
+        : await getBybitHistory(asset, safeDays);
       if (rows.length) return setCached(key, rows);
     } catch (error) {
       if (typeof staleCached !== "undefined" && staleCached) return staleCached;
       throw error;
     }
     if (typeof staleCached !== "undefined" && staleCached) return staleCached;
-    throw new Error(`No Bybit perpetual history found for ${asset.symbol}`);
+    throw new Error(`No perpetual history found for ${asset.symbol}`);
   }
 
   if (asset.market === "indonesia" || asset.exchange === "IDX") {
@@ -1612,6 +1607,55 @@ function buildUnavailableRow(asset, message = "Data historis perpetual belum ter
 }
 
 
+
+function buildFastPreviousRowFromMarketData(row) {
+  const asset = row?.asset;
+  const forecast = row?.forecast;
+  const close = Number(row?.close || asset?.currentPrice || asset?.tvPrice || 0);
+  const change24h = Number(asset?.change24h || row?.analysis?.metrics?.change24h || 0);
+
+  if (!asset || !Number.isFinite(close) || close <= 0 || !Number.isFinite(change24h)) return null;
+
+  const previousClose = close / (1 + change24h / 100);
+  if (!Number.isFinite(previousClose) || previousClose <= 0) return null;
+
+  const previousAsset = {
+    ...asset,
+    currentPrice: previousClose,
+    tvPrice: previousClose,
+    close: previousClose,
+    change24h: 0,
+    lastUpdated: "24 jam yang lalu"
+  };
+
+  return {
+    asset: previousAsset,
+    close: previousClose,
+    change: Number((Number(row?.change || 0) - change24h).toFixed(2)),
+    candles: 0,
+    analysis: {
+      ...(row.analysis || {}),
+      close: previousClose,
+      lastDate: "24 jam yang lalu",
+      metrics: {
+        ...(row.analysis?.metrics || {}),
+        change24h: 0
+      }
+    },
+    forecast: {
+      ...(forecast || {}),
+      asset: `${previousAsset.symbol} - ${previousAsset.name}`,
+      tradePlan: {
+        ...(forecast?.tradePlan || {}),
+        isCurrentlyIdeal: false
+      }
+    },
+    label: "24 jam yang lalu",
+    sourceWarning: "Estimasi 24 jam lalu dari harga sekarang dan perubahan 24 jam."
+  };
+}
+
+
 function analysisDays(asset, days) {
   const maxDays = asset.market === "crypto_spot" || asset.market === "crypto_perp" || asset.market === "crypto" ? 365 : 1825;
   return Math.min(Math.max(Number(days) || 730, 120), maxDays);
@@ -1742,10 +1786,13 @@ async function handleApi(req, res, url) {
     const pages = Math.max(Math.ceil(total / pageSize), 1);
     const pageAssets = assets.slice((page - 1) * pageSize, page * pageSize);
     if (!useMock && market === "crypto_spot") {
-      const results = pageAssets.map((asset) => ({
-        ...buildCryptoScreenRow(asset),
-        previous: null
-      }));
+      const results = pageAssets.map((asset) => {
+        const row = buildCryptoScreenRow(asset);
+        return {
+          ...row,
+          previous: buildFastPreviousRowFromMarketData(row)
+        };
+      });
       json(res, 200, {
         market,
         page,
@@ -1779,7 +1826,7 @@ async function handleApi(req, res, url) {
       pageSize,
       total,
       pages,
-      source: useMock ? "mock" : market === "crypto_spot" ? "CoinGecko Spot" : market === "crypto_perp" || market === "crypto" ? "Bybit Perpetual 1D" : "Stooq/Yahoo",
+      source: useMock ? "mock" : market === "crypto_spot" ? "CoinGecko Spot" : market === "crypto_perp" || market === "crypto" ? "Perpetual 1D: Bybit/Binance/OKX" : "Stooq/Yahoo",
       elapsedMs: Date.now() - startedAt,
       results,
       errors
