@@ -1410,6 +1410,72 @@ function buildCryptoScreenRow(asset) {
   };
 }
 
+
+function buildUnavailableRow(asset, message = "Data historis perpetual belum tersedia") {
+  const close = Number(asset.currentPrice || asset.tvPrice || asset.close) || 0;
+  return {
+    asset,
+    close,
+    change: 0,
+    candles: 0,
+    analysis: {
+      confidence: 0,
+      direction: "neutral",
+      phase: "Data belum tersedia",
+      status: "unavailable",
+      close,
+      lastDate: asset.lastUpdated || new Date().toISOString(),
+      pivots: [],
+      metrics: {},
+      notes: [message]
+    },
+    forecast: {
+      asset: `${asset.symbol} - ${asset.name}`,
+      timeframe: "Data unavailable",
+      bias: "Netral",
+      confidence: 0,
+      phase: "Data belum tersedia",
+      topRange: { from: 0, to: 0 },
+      bottomRange: { from: 0, to: 0 },
+      marketStructure: {
+        label: "Netral",
+        text: message
+      },
+      elliottText: message,
+      entryDecision: "Data historis belum cukup atau pair perpetual tidak tersedia. Aset ini tidak dianalisa untuk trading saat ini.",
+      tradePlan: {
+        action: "Skip trade",
+        side: "",
+        isTradable: false,
+        isCurrentlyIdeal: false,
+        entry: 0,
+        takeProfit: 0,
+        stopLoss: 0,
+        riskReward: 0,
+        minimumRiskReward: 2,
+        profitPercent: 0,
+        lossPercent: 0,
+        rationale: "Skip trade karena data historis belum tersedia dari sumber utama."
+      },
+      fibonacci: {
+        swingHigh: 0,
+        swingLow: 0,
+        fib382: 0,
+        fib500: 0,
+        fib618: 0,
+        fib786: 0,
+        ext1272: 0,
+        ext1618: 0
+      },
+      predictionPath: [],
+      sourceWarning: message
+    },
+    previous: null,
+    sourceWarning: message
+  };
+}
+
+
 function analysisDays(asset, days) {
   const maxDays = asset.market === "crypto" ? 365 : 1825;
   return Math.min(Math.max(Number(days) || 730, 120), maxDays);
@@ -1457,7 +1523,12 @@ async function mapLimit(items, limit, worker) {
       try {
         results[index] = await worker(items[index], index);
       } catch (error) {
-        results[index] = { item: items[index], error: error.message };
+        const item = items[index];
+        if (item?.market === "crypto" && typeof buildUnavailableRow === "function") {
+          results[index] = buildUnavailableRow(item, error.message);
+        } else {
+          results[index] = { item, error: error.message };
+        }
       }
     }
   }
