@@ -1389,11 +1389,12 @@ function analyzeFullAsset(asset, candles, threshold) {
 
 function analyzePreviousAsset(asset, candles, threshold) {
   const sourceCandles = Array.isArray(candles) ? candles : [];
-  if (sourceCandles.length < 121) return null;
+  const lookbackCandles = 7;
+  if (sourceCandles.length < 120 + lookbackCandles) return null;
 
-  const previousCandles = sourceCandles.slice(0, -1);
+  const previousCandles = sourceCandles.slice(0, -lookbackCandles);
   const previousClose = Number(previousCandles.at(-1)?.close);
-  const previousDate = previousCandles.at(-1)?.date || "24 jam yang lalu";
+  const previousDate = previousCandles.at(-1)?.date || "7 hari yang lalu";
 
   if (!Number.isFinite(previousClose) || previousClose <= 0) return null;
 
@@ -1411,7 +1412,7 @@ function analyzePreviousAsset(asset, candles, threshold) {
     ...previous,
     asset: previousAsset,
     close: previousClose,
-    label: "24 jam yang lalu",
+    label: "7 hari yang lalu",
     previousDate
   };
 }
@@ -1682,7 +1683,7 @@ function buildFastPreviousRowFromMarketData(row) {
     tvPrice: previousClose,
     close: previousClose,
     change24h: 0,
-    lastUpdated: "24 jam yang lalu"
+    lastUpdated: "7 hari yang lalu"
   };
 
   return {
@@ -1693,7 +1694,7 @@ function buildFastPreviousRowFromMarketData(row) {
     analysis: {
       ...(row.analysis || {}),
       close: previousClose,
-      lastDate: "24 jam yang lalu",
+      lastDate: "7 hari yang lalu",
       metrics: {
         ...(row.analysis?.metrics || {}),
         change24h: 0
@@ -1707,7 +1708,7 @@ function buildFastPreviousRowFromMarketData(row) {
         isCurrentlyIdeal: false
       }
     },
-    label: "24 jam yang lalu",
+    label: "7 hari yang lalu",
     sourceWarning: "Estimasi 24 jam lalu dari harga sekarang dan perubahan 24 jam."
   };
 }

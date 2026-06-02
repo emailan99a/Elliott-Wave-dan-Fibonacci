@@ -205,15 +205,11 @@ function renderSummaryMeta(summary, extraClass = "") {
 
 function renderPreviousInline(previous) {
   if (!previous) {
-    return '<span class="previous-empty">24 jam yang lalu: belum tersedia</span>';
+    return '<span class="previous-empty">7 hari yang lalu: belum tersedia</span>';
   }
-  const unchanged = previous.comparison && previous.comparison.changed === false
-    ? '<span class="previous-note">(belum berubah)</span>'
-    : "";
   return `
-    <span class="previous-label">24 jam yang lalu:</span>
+    <span class="previous-label">7 hari yang lalu:</span>
     ${renderSummaryMeta(analysisSummary(previous), "previous-value")}
-    ${unchanged}
   `;
 }
 
@@ -532,8 +528,8 @@ function renderPreviousAnalysis(previous, currency) {
   if (!previous) {
     return `
       <section class="previous-panel">
-        <h2>Data 24 jam yang lalu</h2>
-        <p class="analysis-copy">Data 24 jam yang lalu belum tersedia. Biasanya tersedia setelah histori candle harian cukup lengkap.</p>
+        <h2>Data 7 hari yang lalu</h2>
+        <p class="analysis-copy">Data 7 hari yang lalu belum tersedia. Biasanya tersedia setelah histori candle harian cukup lengkap.</p>
       </section>
     `;
   }
@@ -553,8 +549,8 @@ function renderPreviousAnalysis(previous, currency) {
 
   return `
     <section class="previous-panel">
-      <h2>Data 24 jam yang lalu</h2>
-      <p class="analysis-copy">Simulasi analisa dengan candle terakhir dipotong 1 hari, supaya bisa dibandingkan dengan kondisi sekarang.</p>
+      <h2>Data 7 hari yang lalu</h2>
+      <p class="analysis-copy">Simulasi analisa dengan 7 candle terakhir dipotong, supaya bisa dibandingkan dengan kondisi sekarang.</p>
 
       ${renderPredictionChart(forecast.predictionPath, currency)}
 
@@ -583,7 +579,7 @@ function renderPreviousAnalysis(previous, currency) {
         <strong class="${idealLabel === "Sudah" ? "tone-green" : "tone-red"}">${idealLabel}</strong>
       </div>
 
-      <h3>Keterangan trade 24 jam lalu</h3>
+      <h3>Keterangan trade 7 hari lalu</h3>
       <p class="analysis-copy">${escapeHtml(forecast.entryDecision)}</p>
       <p class="analysis-copy">${escapeHtml(forecast.tradePlan.rationale)}</p>
     </section>
