@@ -547,7 +547,7 @@ function renderPreviousAnalysis(previous, currency) {
   return `
     <section class="previous-panel">
       <h2>Data 24 jam yang lalu</h2>
-      <p class="analysis-copy">Simulasi analisa menggunakan data sampai candle sebelumnya, supaya bisa dibandingkan dengan kondisi sekarang.</p>
+      <p class="analysis-copy">Simulasi analisa dengan candle terakhir dipotong 1 hari, supaya bisa dibandingkan dengan kondisi sekarang.</p>
 
       ${renderPredictionChart(forecast.predictionPath, currency)}
 
