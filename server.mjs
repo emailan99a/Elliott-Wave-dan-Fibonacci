@@ -752,9 +752,7 @@ async function getBybitHistory(asset, safeDays) {
     source: "Bybit Perpetual"
   }));
 
-  const output = rows
-    .filter((row) => Number.isFinite(Number(row.close)) && Number(row.close) > 0)
-    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  const output = applyCurrentPriceToRows(rows, asset);
   if (!output.length) throw new Error(`No Bybit perpetual history for ${asset.symbol}`);
   return output.slice(-safeDays);
 }
@@ -783,9 +781,7 @@ async function getBinanceHistory(asset, safeDays) {
     source: "Binance Perpetual"
   }));
 
-  const output = rows
-    .filter((row) => Number.isFinite(Number(row.close)) && Number(row.close) > 0)
-    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  const output = applyCurrentPriceToRows(rows, asset);
   if (!output.length) throw new Error(`No Binance perpetual history for ${asset.symbol}`);
   return output.slice(-safeDays);
 }
@@ -815,9 +811,7 @@ async function getOkxHistory(asset, safeDays) {
     source: "OKX Perpetual"
   }));
 
-  const output = rows
-    .filter((row) => Number.isFinite(Number(row.close)) && Number(row.close) > 0)
-    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  const output = applyCurrentPriceToRows(rows, asset);
   if (!output.length) throw new Error(`No OKX perpetual history for ${asset.symbol}`);
   return output.slice(-safeDays);
 }
@@ -1388,74 +1382,22 @@ function analyzeFullAsset(asset, candles, threshold) {
 }
 
 function analyzePreviousAsset(asset, candles, threshold) {
-  const sourceCandles = Array.isArray(candles) ? candles : [];
-  const lookbackCandles = 7;
-  if (sourceCandles.length < 120 + lookbackCandles) return null;
-
-  const previousCandles = sourceCandles.slice(0, -lookbackCandles);
-  const previousClose = Number(previousCandles.at(-1)?.close);
-  const previousDate = previousCandles.at(-1)?.date || "7 hari yang lalu";
-
-  if (!Number.isFinite(previousClose) || previousClose <= 0) return null;
-
-  const previousAsset = {
-    ...asset,
-    currentPrice: previousClose,
-    tvPrice: previousClose,
-    close: previousClose,
-    lastUpdated: previousDate
-  };
-
-  const previous = analyzeFullAsset(previousAsset, previousCandles, threshold);
-
+  const previousCandles = Array.isArray(candles) ? candles.slice(0, -7) : [];
+  if (previousCandles.length < 120) return null;
+  const previousClose = previousCandles.at(-1)?.close;
+  const previousAsset = Number.isFinite(Number(previousClose))
+    ? { ...asset, currentPrice: Number(previousClose), tvPrice: Number(previousClose), close: Number(previousClose) }
+    : { ...asset };
   return {
-    ...previous,
-    asset: previousAsset,
-    close: previousClose,
-    label: "7 hari yang lalu",
-    previousDate
+    ...analyzeFullAsset(previousAsset, previousCandles, threshold),
+    label: "7 hari yang lalu"
   };
 }
 
 function withPreviousAnalysis(asset, candles, threshold) {
-  const current = analyzeFullAsset(asset, candles, threshold);
-  const previous = analyzePreviousAsset(asset, candles, threshold);
-
-  if (!previous) {
-    return {
-      ...current,
-      previous: null
-    };
-  }
-
-  const currentSummary = {
-    bias: current.forecast?.bias,
-    action: current.forecast?.tradePlan?.action,
-    confidence: current.analysis?.confidence,
-    ideal: Boolean(current.forecast?.tradePlan?.isCurrentlyIdeal)
-  };
-
-  const previousSummary = {
-    bias: previous.forecast?.bias,
-    action: previous.forecast?.tradePlan?.action,
-    confidence: previous.analysis?.confidence,
-    ideal: Boolean(previous.forecast?.tradePlan?.isCurrentlyIdeal)
-  };
-
   return {
-    ...current,
-    previous: {
-      ...previous,
-      comparison: {
-        changed:
-          currentSummary.bias !== previousSummary.bias ||
-          currentSummary.action !== previousSummary.action ||
-          currentSummary.confidence !== previousSummary.confidence ||
-          currentSummary.ideal !== previousSummary.ideal,
-        current: currentSummary,
-        previous: previousSummary
-      }
-    }
+    ...analyzeFullAsset(asset, candles, threshold),
+    previous: analyzePreviousAsset(asset, candles, threshold)
   };
 }
 
@@ -1709,7 +1651,7 @@ function buildFastPreviousRowFromMarketData(row) {
       }
     },
     label: "7 hari yang lalu",
-    sourceWarning: "Estimasi 24 jam lalu dari harga sekarang dan perubahan 24 jam."
+    sourceWarning: "Estimasi 7 hari lalu dari harga sekarang dan perubahan 24 jam."
   };
 }
 
